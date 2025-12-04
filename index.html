@@ -2,13 +2,16 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
+
+<!-- ⚠️ مهم جداً للجوال -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
 <title>🔍 Model Arama ve Toplam Gösterme</title>
 
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Segoe UI'; background: #f0f2f5; padding: 30px; text-align: center; }
 
-  /* 🔥 عنوان احترافي */
   h1 {
     font-size: 48px;
     font-weight: 800;
@@ -17,7 +20,6 @@
     letter-spacing: 4px;
     margin-bottom: 20px;
     text-shadow: 0px 3px 6px rgba(0,0,0,0.15);
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   }
 
   h2 { color: #1a73e8; margin-bottom: 20px; }
@@ -26,17 +28,19 @@
     position: relative;
     display: inline-block;
     text-align: center;
+    width: 300px;
   }
 
   input {
     padding: 12px 10px;
     border: 1px solid #ccc;
     border-radius: 6px;
-    width: 300px;
+    width: 100%;
     transition: 0.2s;
     font-size: 16px;
     margin-bottom: 10px;
   }
+
   input:focus {
     border-color: #1a73e8;
     box-shadow: 0 0 5px rgba(26,115,232,0.4);
@@ -46,18 +50,21 @@
     border: 1px solid #ccc;
     background: #fff;
     position: absolute;
-    width: 300px;
+    width: 100%;
     max-height: 160px;
     overflow-y: auto;
     display: none;
     border-radius: 6px;
     margin-top: 5px;
     box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    z-index: 999;
   }
+
   #searchResults div {
     padding: 10px;
     cursor: pointer;
   }
+
   #searchResults div:hover {
     background: #f0f2f5;
   }
@@ -71,15 +78,18 @@
     overflow: hidden;
     font-size: 20px;
   }
+
   th, td {
     padding: 10px 12px;
     text-align: center;
     border-bottom: 1px solid #ddd;
   }
+
   th {
     background: #1a73e8;
     color: #fff;
   }
+
   td {
     background: #fff;
   }
@@ -92,20 +102,24 @@
     display: none;
   }
 
-  /* 📱 دعم كامل للجوال */
+  /* 📱 دعم كامل لشاشات الموبايل */
   @media (max-width: 600px) {
 
     body {
-      padding: 15px;
+      padding: 10px;
     }
 
     h1 {
-      font-size: 32px;
-      letter-spacing: 2px;
+      font-size: 28px;
+      letter-spacing: 1px;
     }
 
     h2 {
       font-size: 20px;
+    }
+
+    .container {
+      width: 100% !important;
     }
 
     .container input {
@@ -114,7 +128,7 @@
 
     #searchResults {
       width: 100% !important;
-      max-height: 200px;
+      max-height: 250px;
     }
 
     table {
@@ -130,7 +144,6 @@
       font-size: 18px;
     }
   }
-
 </style>
 </head>
 
@@ -164,7 +177,7 @@
   import { getFirestore, collection, getDocs, getDoc, doc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
   const firebaseConfig = {
-    apiKey: "AIzaSyC6ZpIkEi9KMErwJpw2HFK-Wj51dcP6-S0",
+    apiKey: "AIzaSyC6ZpIkEi9KMErwJpw2HFK-Wj51dcPP6-S0",
     authDomain: "price-calculator-f17c7.firebaseapp.com",
     projectId: "price-calculator-f17c7",
     storageBucket: "price-calculator-f17c7.firebasestorage.app",
@@ -181,8 +194,6 @@
     const snap = await getDoc(doc(db, "settings", "dollar"));
     if (snap.exists()) {
       dolar = snap.data().value;
-    } else {
-      alert("سعر الدولار غير موجود! سيتم استخدام القيمة الافتراضية.");
     }
   }
 
@@ -229,16 +240,16 @@
     const tbody = document.getElementById('resultBody');
     tbody.innerHTML = "";
 
-    const currentModel = document.getElementById('currentModel');
-    currentModel.innerText = `Sonuçlar için model: ${modelName}`;
-    currentModel.style.display = "block";
+    document.getElementById('currentModel').innerText =
+      `Sonuçlar için model: ${modelName}`;
+    document.getElementById('currentModel').style.display = "block";
 
     data.rows.forEach(r => {
       const total = (r.usd * dolar) + r.profit;
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td style="padding-right: 10px;">${r.name}</td>
-        <td style="padding-left: 10px;">${total.toFixed(2)} TL</td>
+        <td>${r.name}</td>
+        <td>${total.toFixed(2)} TL</td>
       `;
       tbody.appendChild(tr);
     });
