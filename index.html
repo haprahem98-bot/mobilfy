@@ -2,13 +2,13 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>🔍 Model Arama ve Toplam Gösterme</title>
 
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Segoe UI'; background: #f0f2f5; padding: 30px; text-align: center; }
 
+  /* 🔥 عنوان احترافي */
   h1 {
     font-size: 48px;
     font-weight: 800;
@@ -37,7 +37,6 @@
     font-size: 16px;
     margin-bottom: 10px;
   }
-
   input:focus {
     border-color: #1a73e8;
     box-shadow: 0 0 5px rgba(26,115,232,0.4);
@@ -55,37 +54,32 @@
     margin-top: 5px;
     box-shadow: 0 2px 6px rgba(0,0,0,0.2);
   }
-
   #searchResults div {
     padding: 10px;
     cursor: pointer;
   }
-
   #searchResults div:hover {
     background: #f0f2f5;
   }
 
   table {
-    width: 100%;
+    width: 60%;
     margin: 20px auto;
     border-collapse: collapse;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     border-radius: 8px;
     overflow: hidden;
-    font-size: 18px;
+    font-size: 20px;
   }
-
   th, td {
     padding: 10px 12px;
     text-align: center;
     border-bottom: 1px solid #ddd;
   }
-
   th {
     background: #1a73e8;
     color: #fff;
   }
-
   td {
     background: #fff;
   }
@@ -147,6 +141,8 @@
     const snap = await getDoc(doc(db, "settings", "dollar"));
     if (snap.exists()) {
       dolar = snap.data().value;
+    } else {
+      alert("سعر الدولار غير موجود! سيتم استخدام القيمة الافتراضية.");
     }
   }
 
@@ -155,29 +151,14 @@
   window.showSuggestions = async function() {
     const input = document.getElementById('searchInput');
     const results = document.getElementById('searchResults');
-    const normalize = (text) => text
-      .toLowerCase('tr')
-      .replace(/ı/g, 'i')
-      .replace(/İ/g, 'i')
-      .replace(/ş/g, 's')
-      .replace(/Ş/g, 's')
-      .replace(/ö/g, 'o')
-      .replace(/Ö/g, 'o')
-      .replace(/ü/g, 'u')
-      .replace(/Ü/g, 'u')
-      .replace(/ğ/g, 'g')
-      .replace(/Ğ/g, 'g')
-      .replace(/ç/g, 'c')
-      .replace(/Ç/g, 'c');
-
-    const val = normalize(input.value.trim());
+    const val = input.value.trim().toLowerCase();
     results.innerHTML = "";
 
     if (!val) { results.style.display = "none"; return; }
 
     const snapshot = await getDocs(collection(db, "models"));
     const models = snapshot.docs.map(d => d.id);
-    const matches = models.filter(m => m.toLowerCase('tr').replace(/ı/g,'i').includes(val));
+    const matches = models.filter(m => m.toLowerCase().includes(val));
 
     if (!matches.length) { results.style.display = "none"; return; }
 
@@ -190,7 +171,6 @@
 
     results.style.display = "block";
   };
-  };
 
   document.addEventListener('click', (e) => {
     if (!document.querySelector('.container').contains(e.target)) {
@@ -200,7 +180,10 @@
 
   async function loadModel(modelName) {
     const docSnap = await getDoc(doc(db, "models", modelName));
-    if (!docSnap.exists()) return;
+    if (!docSnap.exists()) {
+      alert("Model bulunamadı!");
+      return;
+    }
 
     const data = docSnap.data();
     const tbody = document.getElementById('resultBody');
@@ -211,7 +194,7 @@
     currentModel.style.display = "block";
 
     data.rows.forEach(r => {
-      const total = (r.usd * dolar) + r.profit - 250;
+      const total = (r.usd * dolar) + r.profit;
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td style="padding-right: 10px;">${r.name}</td>
