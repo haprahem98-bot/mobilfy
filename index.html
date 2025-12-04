@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🔍 Model Arama ve Toplam Gösterme</title>
+
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI'; background: #f0f2f5; padding: 30px; text-align: center; }
+
+  h1 {
+    font-size: 48px;
+    font-weight: 800;
+    color: #1a73e8;
+    text-transform: uppercase;
+    letter-spacing: 4px;
+    margin-bottom: 20px;
+    text-shadow: 0px 3px 6px rgba(0,0,0,0.15);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  }
+
+  h2 { color: #1a73e8; margin-bottom: 20px; }
+
+  .container {
+    position: relative;
+    display: inline-block;
+    text-align: center;
+  }
+
+  input {
+    padding: 12px 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    width: 300px;
+    transition: 0.2s;
+    font-size: 16px;
+    margin-bottom: 10px;
+  }
+
+  input:focus {
+    border-color: #1a73e8;
+    box-shadow: 0 0 5px rgba(26,115,232,0.4);
+  }
+
+  #searchResults {
+    border: 1px solid #ccc;
+    background: #fff;
+    position: absolute;
+    width: 300px;
+    max-height: 160px;
+    overflow-y: auto;
+    display: none;
+    border-radius: 6px;
+    margin-top: 5px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  }
+
+  #searchResults div {
+    padding: 10px;
+    cursor: pointer;
+  }
+
+  #searchResults div:hover {
+    background: #f0f2f5;
+  }
+
+  table {
+    width: 100%;
+    margin: 20px auto;
+    border-collapse: collapse;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 18px;
+  }
+
+  th, td {
+    padding: 10px 12px;
+    text-align: center;
+    border-bottom: 1px solid #ddd;
+  }
+
+  th {
+    background: #1a73e8;
+    color: #fff;
+  }
+
+  td {
+    background: #fff;
+  }
+
+  #currentModel {
+    color: #1a73e8;
+    margin-bottom: 15px;
+    font-size: 22px;
+    text-align: center;
+    display: none;
+  }
+</style>
+</head>
+
+<body>
+
+<h1>GLOBAL İLETİŞİM</h1>
+
+<h2>🔍 Model Arama</h2>
+
+<div class="container">
+  <input type="text" id="searchInput" placeholder="Model ara…" oninput="showSuggestions()" autocomplete="off">
+  <div id="searchResults"></div>
+</div>
+
+<h3 id="currentModel"></h3>
+
+<input type="hidden" id="dollarRate">
+
+<table id="resultTable" style="display:none;">
+  <thead>
+    <tr>
+      <th style="padding-right: 20px;">Tür</th>
+      <th style="padding-left: 20px;">Toplam (TL)</th>
+    </tr>
+  </thead>
+  <tbody id="resultBody"></tbody>
+</table>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+  import { getFirestore, collection, getDocs, getDoc, doc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyC6ZpIkEi9KMErwJpw2HFK-Wj51dcP6-S0",
+    authDomain: "price-calculator-f17c7.firebaseapp.com",
+    projectId: "price-calculator-f17c7",
+    storageBucket: "price-calculator-f17c7.firebasestorage.app",
+    messagingSenderId: "541750328906",
+    appId: "1:541750328906:web:755597e8f21164492f70b3"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  let dolar = 42.290;
+
+  async function loadDollarRate() {
+    const snap = await getDoc(doc(db, "settings", "dollar"));
+    if (snap.exists()) {
+      dolar = snap.data().value;
+    }
+  }
+
+  await loadDollarRate();
+
+  window.showSuggestions = async function() {
+    const input = document.getElementById('searchInput');
+    const results = document.getElementById('searchResults');
+    const val = input.value.trim().toLowerCase();
+    results.innerHTML = "";
+
+    if (!val) { results.style.display = "none"; return; }
+
+    const snapshot = await getDocs(collection(db, "models"));
+    const models = snapshot.docs.map(d => d.id);
+    const matches = models.filter(m => m.toLowerCase().includes(val));
+
+    if (!matches.length) { results.style.display = "none"; return; }
+
+    matches.forEach(m => {
+      const div = document.createElement('div');
+      div.textContent = m;
+      div.onclick = () => loadModel(m);
+      results.appendChild(div);
+    });
+
+    results.style.display = "block";
+  };
+
+  document.addEventListener('click', (e) => {
+    if (!document.querySelector('.container').contains(e.target)) {
+      document.getElementById('searchResults').style.display = "none";
+    }
+  });
+
+  async function loadModel(modelName) {
+    const docSnap = await getDoc(doc(db, "models", modelName));
+    if (!docSnap.exists()) return;
+
+    const data = docSnap.data();
+    const tbody = document.getElementById('resultBody');
+    tbody.innerHTML = "";
+
+    const currentModel = document.getElementById('currentModel');
+    currentModel.innerText = `Sonuçlar için model: ${modelName}`;
+    currentModel.style.display = "block";
+
+    data.rows.forEach(r => {
+      const total = (r.usd * dolar) + r.profit - 250;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td style="padding-right: 10px;">${r.name}</td>
+        <td style="padding-left: 10px;">${total.toFixed(2)} TL</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    document.getElementById('resultTable').style.display = "table";
+    document.getElementById('searchResults').style.display = "none";
+    document.getElementById('searchInput').value = "";
+  }
+</script>
+
+</body>
+</html>
