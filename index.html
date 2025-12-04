@@ -155,14 +155,29 @@
   window.showSuggestions = async function() {
     const input = document.getElementById('searchInput');
     const results = document.getElementById('searchResults');
-    const val = input.value.trim().toLowerCase();
+    const normalize = (text) => text
+      .toLowerCase('tr')
+      .replace(/ı/g, 'i')
+      .replace(/İ/g, 'i')
+      .replace(/ş/g, 's')
+      .replace(/Ş/g, 's')
+      .replace(/ö/g, 'o')
+      .replace(/Ö/g, 'o')
+      .replace(/ü/g, 'u')
+      .replace(/Ü/g, 'u')
+      .replace(/ğ/g, 'g')
+      .replace(/Ğ/g, 'g')
+      .replace(/ç/g, 'c')
+      .replace(/Ç/g, 'c');
+
+    const val = normalize(input.value.trim());
     results.innerHTML = "";
 
     if (!val) { results.style.display = "none"; return; }
 
     const snapshot = await getDocs(collection(db, "models"));
     const models = snapshot.docs.map(d => d.id);
-    const matches = models.filter(m => m.toLowerCase().includes(val));
+    const matches = models.filter(m => m.toLowerCase('tr').replace(/ı/g,'i').includes(val));
 
     if (!matches.length) { results.style.display = "none"; return; }
 
@@ -174,6 +189,7 @@
     });
 
     results.style.display = "block";
+  };
   };
 
   document.addEventListener('click', (e) => {
