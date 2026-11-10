@@ -65,8 +65,36 @@
     cursor: pointer;
   }
 
-  #searchResults div:hover {
-    background: #f0f2f5;
+  #searchResults div:hover,
+  #searchResults .result-item.active {
+    background: #eef5ff;
+  }
+
+  #searchResults .result-item {
+    padding: 11px 12px;
+    cursor: pointer;
+    text-align: left;
+    border-bottom: 1px solid #f0f0f0;
+    font-weight: 600;
+  }
+
+  #searchResults .result-item:last-child {
+    border-bottom: none;
+  }
+
+  #searchResults .result-item small {
+    display: block;
+    margin-top: 3px;
+    color: #7a7a7a;
+    font-size: 11px;
+    font-weight: 400;
+  }
+
+  #searchResults .search-status {
+    padding: 12px;
+    color: #666;
+    cursor: default;
+    text-align: center;
   }
 
   table {
@@ -188,44 +216,306 @@
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
 
+  const input = document.getElementById('searchInput');
+  const results = document.getElementById('searchResults');
+
   let dolar = 42.290;
+  let modelIndex = [];
+  let modelIndexPromise = null;
+  let currentMatches = [];
+  let activeIndex = -1;
+  let searchTimer = null;
 
   async function loadDollarRate() {
     const snap = await getDoc(doc(db, "settings", "dollar"));
-    if (snap.exists()) {
-      dolar = snap.data().value;
+    if (snap.exists()) dolar = snap.data().value;
+  }
+
+  // Converts Turkish/accents/Arabic digits/punctuation to a common searchable form.
+  function normalizeText(value = "") {
+    const digitMap = {
+      '٠':'0','١':'1','٢':'2','٣':'3','٤':'4','٥':'5','٦':'6','٧':'7','٨':'8','٩':'9',
+      '۰':'0','۱':'1','۲':'2','۳':'3','۴':'4','۵':'5','۶':'6','۷':'7','۸':'8','۹':'9'
+    };
+
+    return String(value)
+      .replace(/[٠-٩۰-۹]/g, ch => digitMap[ch] || ch)
+      .replace(/İ/g, 'I')
+      .replace(/ı/g, 'i')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/ş/g, 's')
+      .replace(/ç/g, 'c')
+      .replace(/ğ/g, 'g')
+      .replace(/ö/g, 'o')
+      .replace(/ü/g, 'u')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+      .replace(/\s+/g, ' ');
+  }
+
+  function compact(value = "") {
+    return normalizeText(value).replace(/\s+/g, '');
+  }
+
+  function tokens(value = "") {
+    const n = normalizeText(value);
+    if (!n) return [];
+    return n.split(' ').flatMap(part => part.match(/[a-z]+|\d+/g) || []);
+  }
+
+  function numbers(value = "") {
+    return normalizeText(value).match(/\d+/g) || [];
+  }
+
+  function levenshtein(a, b, maxDistance = Infinity) {
+    if (a === b) return 0;
+    if (!a.length) return b.length;
+    if (!b.length) return a.length;
+    if (Math.abs(a.length - b.length) > maxDistance) return maxDistance + 1;
+
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+    let curr = new Array(b.length + 1);
+
+    for (let i = 1; i <= a.length; i++) {
+      curr[0] = i;
+      let rowMin = curr[0];
+      for (let j = 1; j <= b.length; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        curr[j] = Math.min(
+          curr[j - 1] + 1,
+          prev[j] + 1,
+          prev[j - 1] + cost
+        );
+        rowMin = Math.min(rowMin, curr[j]);
+      }
+      if (rowMin > maxDistance) return maxDistance + 1;
+      [prev, curr] = [curr, prev];
+    }
+    return prev[b.length];
+  }
+
+  function subsequenceScore(query, text) {
+    let qi = 0;
+    let gaps = 0;
+    let last = -1;
+    for (let i = 0; i < text.length && qi < query.length; i++) {
+      if (text[i] === query[qi]) {
+        if (last >= 0) gaps += i - last - 1;
+        last = i;
+        qi++;
+      }
+    }
+    if (qi !== query.length) return 0;
+    return Math.max(0, 420 - gaps * 8 - (text.length - query.length) * 2);
+  }
+
+  function tokenSimilarity(qTokens, modelTokens) {
+    if (!qTokens.length || !modelTokens.length) return 0;
+    let total = 0;
+
+    for (const q of qTokens) {
+      let best = 0;
+      const isNumber = /^\d+$/.test(q);
+
+      for (const m of modelTokens) {
+        if (q === m) { best = 1; break; }
+        if (m.startsWith(q) || q.startsWith(m)) best = Math.max(best, 0.92);
+        if (m.includes(q) || q.includes(m)) best = Math.max(best, 0.82);
+
+        // Number mismatches should not be fuzzily treated as the same phone model.
+        if (isNumber || /^\d+$/.test(m)) continue;
+        if (q.length < 3 || m.length < 3) continue;
+
+        const maxD = Math.max(1, Math.floor(Math.max(q.length, m.length) * 0.34));
+        const d = levenshtein(q, m, maxD);
+        if (d <= maxD) {
+          const sim = 1 - (d / Math.max(q.length, m.length));
+          best = Math.max(best, sim);
+        }
+      }
+
+      if (best < 0.55) return 0;
+      total += best;
+    }
+
+    return total / qTokens.length;
+  }
+
+  function scoreModel(query, item) {
+    const qNorm = normalizeText(query);
+    const qCompact = compact(query);
+    const qTokens = tokens(query);
+    const qNumbers = numbers(query);
+    if (!qNorm) return 0;
+
+    // Model numbers are important: S24 should not rank S23, iPhone 13 should not rank iPhone 14.
+    if (qNumbers.length) {
+      const numberMatch = qNumbers.every(qn =>
+        item.numbers.some(mn => qn === mn || (qn.length === 1 && mn.startsWith(qn)))
+      );
+      if (!numberMatch) return 0;
+    }
+
+    const n = item.normalized;
+    const c = item.compact;
+    let score = 0;
+
+    if (n === qNorm) score = Math.max(score, 1200);
+    if (c === qCompact) score = Math.max(score, 1160);
+    if (n.startsWith(qNorm)) score = Math.max(score, 1050 - (n.length - qNorm.length));
+    if (c.startsWith(qCompact)) score = Math.max(score, 1010 - (c.length - qCompact.length));
+    if (n.includes(qNorm)) score = Math.max(score, 930 - n.indexOf(qNorm) * 3);
+    if (c.includes(qCompact)) score = Math.max(score, 900 - c.indexOf(qCompact) * 3);
+
+    const tokenSim = tokenSimilarity(qTokens, item.tokens);
+    if (tokenSim > 0) {
+      const allExactOrPrefix = qTokens.every(q =>
+        item.tokens.some(m => m === q || m.startsWith(q) || q.startsWith(m))
+      );
+      score = Math.max(score, (allExactOrPrefix ? 850 : 650) + Math.round(tokenSim * 130));
+    }
+
+    if (qCompact.length >= 3) {
+      score = Math.max(score, subsequenceScore(qCompact, c));
+
+      // Typo tolerance on compact names, especially useful for short model names.
+      const maxD = Math.max(1, Math.floor(qCompact.length * 0.30));
+      if (Math.abs(c.length - qCompact.length) <= maxD + 4) {
+        const d = levenshtein(qCompact, c, maxD + 4);
+        const sim = 1 - d / Math.max(qCompact.length, c.length);
+        if (sim >= 0.62) score = Math.max(score, 520 + Math.round(sim * 180));
+      }
+    }
+
+    // Prefer shorter/cleaner names when two results are otherwise similarly relevant.
+    return score > 0 ? score - Math.min(35, Math.max(0, c.length - qCompact.length)) : 0;
+  }
+
+  async function ensureModelIndex() {
+    if (modelIndex.length) return modelIndex;
+    if (modelIndexPromise) return modelIndexPromise;
+
+    modelIndexPromise = (async () => {
+      const snapshot = await getDocs(collection(db, "models"));
+      modelIndex = snapshot.docs.map(d => ({
+        id: d.id,
+        normalized: normalizeText(d.id),
+        compact: compact(d.id),
+        tokens: tokens(d.id),
+        numbers: numbers(d.id)
+      }));
+      return modelIndex;
+    })();
+
+    try {
+      return await modelIndexPromise;
+    } finally {
+      modelIndexPromise = null;
     }
   }
 
-  await loadDollarRate();
-
-  window.showSuggestions = async function() {
-    const input = document.getElementById('searchInput');
-    const results = document.getElementById('searchResults');
-    const val = input.value.trim().toLowerCase();
+  function renderSuggestions(matches) {
     results.innerHTML = "";
+    activeIndex = -1;
 
-    if (!val) { results.style.display = "none"; return; }
+    if (!matches.length) {
+      const empty = document.createElement('div');
+      empty.className = 'search-status';
+      empty.textContent = 'Eşleşen model bulunamadı';
+      results.appendChild(empty);
+      results.style.display = 'block';
+      return;
+    }
 
-    const snapshot = await getDocs(collection(db, "models"));
-    const models = snapshot.docs.map(d => d.id);
-    const matches = models.filter(m => m.toLowerCase().includes(val));
-
-    if (!matches.length) { results.style.display = "none"; return; }
-
-    matches.forEach(m => {
+    matches.forEach((match, index) => {
       const div = document.createElement('div');
-      div.textContent = m;
-      div.onclick = () => loadModel(m);
+      div.className = 'result-item';
+      div.textContent = match.id;
+
+      if (index === 0 && matches.length > 1) {
+        const hint = document.createElement('small');
+        hint.textContent = 'En yakın eşleşme';
+        div.appendChild(hint);
+      }
+
+      div.addEventListener('mousedown', e => e.preventDefault());
+      div.addEventListener('click', () => loadModel(match.id));
       results.appendChild(div);
     });
 
-    results.style.display = "block";
+    results.style.display = 'block';
+  }
+
+  async function performSearch() {
+    const query = input.value.trim();
+    if (!query) {
+      results.innerHTML = '';
+      results.style.display = 'none';
+      currentMatches = [];
+      return;
+    }
+
+    if (!modelIndex.length) {
+      results.innerHTML = '<div class="search-status">Aranıyor…</div>';
+      results.style.display = 'block';
+    }
+
+    try {
+      const index = await ensureModelIndex();
+      // Ignore a stale async search if the user already changed the input.
+      if (query !== input.value.trim()) return;
+
+      currentMatches = index
+        .map(item => ({ id: item.id, score: scoreModel(query, item) }))
+        .filter(item => item.score > 0)
+        .sort((a, b) => b.score - a.score || a.id.length - b.id.length || a.id.localeCompare(b.id, 'tr'))
+        .slice(0, 10);
+
+      renderSuggestions(currentMatches);
+    } catch (err) {
+      console.error(err);
+      results.innerHTML = '<div class="search-status">Arama sırasında hata oluştu</div>';
+      results.style.display = 'block';
+    }
+  }
+
+  window.showSuggestions = function() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(performSearch, 90);
   };
 
-  document.addEventListener('click', (e) => {
+  input.addEventListener('keydown', e => {
+    const items = [...results.querySelectorAll('.result-item')];
+
+    if (e.key === 'ArrowDown' && items.length) {
+      e.preventDefault();
+      activeIndex = (activeIndex + 1) % items.length;
+    } else if (e.key === 'ArrowUp' && items.length) {
+      e.preventDefault();
+      activeIndex = (activeIndex - 1 + items.length) % items.length;
+    } else if (e.key === 'Enter') {
+      if (items.length) {
+        e.preventDefault();
+        const selected = currentMatches[activeIndex >= 0 ? activeIndex : 0];
+        if (selected) loadModel(selected.id);
+      }
+      return;
+    } else if (e.key === 'Escape') {
+      results.style.display = 'none';
+      return;
+    } else {
+      return;
+    }
+
+    items.forEach((el, i) => el.classList.toggle('active', i === activeIndex));
+    items[activeIndex]?.scrollIntoView({ block: 'nearest' });
+  });
+
+  document.addEventListener('click', e => {
     if (!document.querySelector('.container').contains(e.target)) {
-      document.getElementById('searchResults').style.display = "none";
+      results.style.display = 'none';
     }
   });
 
@@ -240,24 +530,32 @@
     const tbody = document.getElementById('resultBody');
     tbody.innerHTML = "";
 
-    document.getElementById('currentModel').innerText =
-      `Sonuçlar için model: ${modelName}`;
+    document.getElementById('currentModel').innerText = `Sonuçlar için model: ${modelName}`;
     document.getElementById('currentModel').style.display = "block";
 
-    data.rows.forEach(r => {
-      const total = (r.usd * dolar) + r.profit;
+    (data.rows || []).forEach(r => {
+      const usd = Number(r.usd) || 0;
+      const profit = Number(r.profit) || 0;
+      const total = (usd * dolar) + profit;
       const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td>${r.name}</td>
-        <td>${total.toFixed(2)} TL</td>
-      `;
+
+      const nameTd = document.createElement('td');
+      nameTd.textContent = r.name || '';
+      const totalTd = document.createElement('td');
+      totalTd.textContent = `${total.toFixed(2)} TL`;
+
+      tr.append(nameTd, totalTd);
       tbody.appendChild(tr);
     });
 
     document.getElementById('resultTable').style.display = "table";
-    document.getElementById('searchResults').style.display = "none";
-    document.getElementById('searchInput').value = "";
+    results.style.display = "none";
+    input.value = "";
+    currentMatches = [];
   }
+
+  // Load settings and model names once. Searches after that are instant and do not reread Firestore per keystroke.
+  await Promise.all([loadDollarRate(), ensureModelIndex()]);
 </script>
 
 </body>
